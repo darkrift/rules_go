@@ -25,6 +25,9 @@ test --test_output=errors
 build:macos --copt=-Dfdopen=fdopen
 build:macos --host_copt=-Dfdopen=fdopen
 
+# objc_library requires the Apple C++ toolchain when toolchain resolution is enabled.
+build:macos --extra_toolchains=@local_config_apple_cc_toolchains//:all
+
 # Go requires a C toolchain that accepts options and emits errors like
 # gcc or clang. The Go SDK does not support MSVC.
 build:windows --cpu=x64_windows
