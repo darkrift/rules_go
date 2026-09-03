@@ -50,10 +50,6 @@ load(
     "emit_preprofile",
 )
 load(
-    "//go/private/rules:transition.bzl",
-    "non_request_nogo_transition",
-)
-load(
     ":common.bzl",
     "COVERAGE_OPTIONS_DENYLIST",
     "GO_TOOLCHAIN",
@@ -859,7 +855,7 @@ def _go_context_data_impl(ctx):
 
     return [
         GoContextInfo(
-            coverdata = ctx.attr.coverdata[0][GoArchive],
+            coverdata = ctx.attr.coverdata[GoArchive],
         ),
         ctx.attr.stdlib[GoStdLib],
         ctx.attr.go_config[GoConfigInfo],
@@ -870,7 +866,6 @@ go_context_data = rule(
     attrs = {
         "coverdata": attr.label(
             mandatory = True,
-            cfg = non_request_nogo_transition,
             providers = [GoArchive],
         ),
         "go_config": attr.label(
@@ -880,9 +875,6 @@ go_context_data = rule(
         "stdlib": attr.label(
             mandatory = True,
             providers = [GoStdLib],
-        ),
-        "_allowlist_function_transition": attr.label(
-            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
         ),
     },
     doc = """go_context_data gathers information about the build configuration.

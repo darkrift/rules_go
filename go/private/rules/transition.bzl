@@ -188,20 +188,6 @@ go_transition = transition(
     ] + TRANSITIONED_GO_SETTING_KEYS + _SETTING_KEY_TO_ORIGINAL_SETTING_KEY.values(),
 )
 
-def _non_request_nogo_transition(_settings, _attr):
-    # This transition is used to make sure we only end up with 1 copy of coverdata,
-    # even if a test links against it and is run in coverage mode.
-    #
-    # It is also used to make sure that we do not end up with multiple configurations
-    # for CC toolchain dependencies when doing CGO.
-    return {"//go/private:request_nogo": False}
-
-non_request_nogo_transition = transition(
-    implementation = _non_request_nogo_transition,
-    inputs = [],
-    outputs = ["//go/private:request_nogo"],
-)
-
 _common_reset_transition_dict = dict({
     "//go/private:request_nogo": False,
     "//go/config:static": False,
@@ -270,7 +256,11 @@ def _non_go_tool_transition_impl(settings, _attr):
     targets or protoc directly.
     """
     settings = dict(settings, **_reset_transition_dict)
+
+    # Non-Go tools don't run nogo, so use the default values rather than the
+    # tool values to share the configuration of plain exec tools.
     settings["//go/private:bootstrap_nogo"] = False
+    settings["//go/private:request_nogo"] = True
     return settings
 
 non_go_tool_transition = transition(
@@ -292,7 +282,12 @@ def _go_stdlib_transition_impl(settings, _attr):
         if label not in _stdlib_keep_keys:
             settings[label] = value
     settings["//go/config:tags"] = [t for t in settings["//go/config:tags"] if t in _TAG_AFFECTS_STDLIB]
+
+    # The standard library doesn't run nogo, so use the default values rather
+    # than the tool values to share the configuration of both regular targets
+    # and plain exec tools.
     settings["//go/private:bootstrap_nogo"] = False
+    settings["//go/private:request_nogo"] = True
     settings["//command_line_option:collect_code_coverage"] = False
     return settings
 
