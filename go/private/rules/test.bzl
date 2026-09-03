@@ -406,10 +406,11 @@ _go_test_kwargs = {
             doc = """Controls whether cgo source code and dependencies are compiled and linked,
             similar to setting `CGO_ENABLED`. May be one of `on`, `off`,
             or `auto`. If `auto`, this defers to `//go/config:pure`, which
-            defaults to `off`. Setting the build setting to `auto` starts in
-            pure mode and switches to `off` when a Go dependency requires
-            cgo. Pure mode is also used when no C/C++ toolchain is configured
-            or when cross-compiling. See [mode attributes], specifically [pure].
+            defaults to `off`. Setting the build setting to `auto` preserves
+            the legacy behavior: cgo is enabled when supported and a C/C++
+            toolchain is configured, and pure mode is used otherwise.
+            Dependencies inherit this mode and do not change it. See [mode
+            attributes], specifically [pure].
             """,
         ),
         "static": attr.string(

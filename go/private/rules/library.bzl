@@ -13,6 +13,10 @@
 # limitations under the License.
 
 load(
+    "@bazel_skylib//rules:common_settings.bzl",
+    "BuildSettingInfo",
+)
+load(
     "//go/private:common.bzl",
     "asm_exts",
     "cgo_exts",
@@ -33,12 +37,34 @@ load(
 )
 load(
     "//go/private/rules:transition.bzl",
-    "go_transition",
     "non_go_transition",
 )
 
+def _pure_constraint_failure(ctx, configured):
+    required = ctx.attr.pure
+    fail((
+        '{} has pure = "{}", but its effective configuration has pure = "{}". ' +
+        "The go_library pure attribute is a constraint; set the matching value " +
+        "on the enclosing go_binary or go_test, or through //go/config:pure."
+    ).format(ctx.label, required, configured))
+
+def _validate_pure_constraint_before_context(ctx):
+    # An explicit "on" configuration is unconditionally pure. Catch an "off"
+    # library before go_context attempts C++ toolchain lookup; pure graphs do
+    # not request that toolchain, so its generic error would be misleading.
+    if (ctx.attr.pure == "off" and
+        ctx.attr._pure_flag[BuildSettingInfo].value == "on"):
+        _pure_constraint_failure(ctx, "on")
+
+def _validate_pure_constraint(ctx, mode):
+    required = ctx.attr.pure
+    configured = "on" if mode.pure else "off"
+    if required != "auto" and required != configured:
+        _pure_constraint_failure(ctx, configured)
+
 def _go_library_impl(ctx):
     """Implements the go_library() rule."""
+    _validate_pure_constraint_before_context(ctx)
     go = go_context(
         ctx,
         importpath = ctx.attr.importpath,
@@ -48,6 +74,7 @@ def _go_library_impl(ctx):
         go_context_data = ctx.attr._go_context_data,
         maybe_needs_cc_toolchain = maybe_needs_cc_toolchain(ctx.attr),
     )
+    _validate_pure_constraint(ctx, go.mode)
 
     go_info = new_go_info(go, ctx.attr)
     archive = go.archive(go, go_info)
@@ -76,7 +103,6 @@ def _go_library_impl(ctx):
 
 go_library = go_rule(
     _go_library_impl,
-    cfg = go_transition,
     attrs = {
         "data": attr.label_list(
             allow_files = True,
@@ -194,23 +220,18 @@ go_library = go_rule(
         "pure": attr.string(
             default = "auto",
             values = ["auto", "on", "off"],
-            doc = """Controls whether cgo source code and dependencies are compiled,
-            similar to setting `CGO_ENABLED`. May be one of `on`, `off`,
-            or `auto`. If `auto`, this defers to `//go/config:pure`, which
-            defaults to `off`. Setting this to `off` makes binaries, tests, and
-            libraries that consume this library use cgo even when
-            `--@io_bazel_rules_go//go/config:pure=on`. A consumer that explicitly
-            sets this to `on` is incompatible with a dependency that requires
-            cgo. See [mode attributes], specifically [pure].
+            doc = """Constrains the cgo mode in which this library may be built.
+            May be one of `on`, `off`, or `auto`. `on` requires pure mode
+            (`CGO_ENABLED=0`); `off` requires cgo to be enabled; and `auto`
+            accepts the mode inherited from the enclosing binary, test, or
+            `//go/config:pure`. This attribute never changes the library's
+            configuration. See [mode attributes], specifically [pure].
             """,
         ),
         "_go_context_data": attr.label(default = "//:go_context_data"),
         "_nogo": attr.label(
             default = Label("@io_bazel_rules_nogo//:nogo"),
             cfg = "exec",
-        ),
-        "_allowlist_function_transition": attr.label(
-            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
         ),
     },
     provides = [GoArchive, GoInfo],

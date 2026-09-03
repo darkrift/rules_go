@@ -146,17 +146,8 @@ def _go_transition_impl(settings, attr):
         # real setting can be reset to this value before the new configuration
         # would cross a non-deps dependency edge.
         if value != old_value:
-            previous_original = original_settings.get(original_key)
-            if previous_original:
-                # go_library may override pure in either direction. If this
-                # transition restores the value from before the outermost Go
-                # transition, the original value no longer needs to be saved.
-                # Otherwise, keep it so non-Go dependencies can restore it.
-                # Other nested mode changes remain unsupported.
-                if key != "//go/config:pure":
-                    fail("go_transition can't be nested")
-                settings[original_key] = "" if value == json.decode(previous_original) else previous_original
-                continue
+            if original_settings.get(original_key):
+                fail("go_transition can't be nested")
 
             # Encoding as JSON makes it possible to embed settings of arbitrary
             # types (currently bool, string and string_list) into a single type

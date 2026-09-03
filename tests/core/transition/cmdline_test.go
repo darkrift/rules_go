@@ -87,7 +87,7 @@ func TestPure(t *testing.T) {
 		t.Fatalf("running //:maybe_pure with pure=auto: %v", err)
 	}
 	got = string(bytes.TrimSpace(out))
-	if want := "pure"; got != want {
+	if want := "not pure"; got != want {
 		t.Fatalf("got %q; want %q", got, want)
 	}
 }

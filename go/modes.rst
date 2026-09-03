@@ -66,8 +66,8 @@ or using `Bazel configuration transitions`_.
 | :param:`pure`          | :type:`string`      | :value:`"off"`                |
 +------------------------+---------------------+-------------------------------+
 | Controls cgo mode. Must be ``"on"``, ``"off"``, or ``"auto"``. ``"off"``     |
-| enables cgo and is the default. ``"on"`` disables cgo. ``"auto"`` starts in  |
-| pure mode and switches to cgo when a Go dependency requires it.              |
+| enables cgo and is the default. ``"on"`` disables cgo. ``"auto"`` uses the   |
+| legacy default: cgo when supported and configured, pure mode otherwise.      |
 +------------------------+---------------------+-------------------------------+
 | :param:`debug`         | :type:`bool`        | :value:`false`                |
 +------------------------+---------------------+-------------------------------+

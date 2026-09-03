@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@bazel_skylib//lib:structs.bzl", "structs")
 load(
     "//go/private:context.bzl",
     "validate_nogo",
@@ -27,7 +26,6 @@ load(
     "//go/private:providers.bzl",
     "GoArchive",
     "GoArchiveData",
-    "GoInfo",
     "effective_importpath_pkgpath",
 )
 load(
@@ -39,189 +37,12 @@ load(
     "cgo_configure",
 )
 
-def _archive_key(archive):
-    return (str(archive.data.label), getattr(archive.source, "testfilter", None))
-
-def _archive_closure(archive):
-    """Returns actual GoArchive objects in archive's dependency closure."""
-    arc_data_list = archive.transitive.to_list()
-    edge_count = 0
-    for data in arc_data_list:
-        edge_count += len(data._dep_labels)
-    stack = [archive]
-    seen = {}
-    closure = []
-
-    # Each unique archive is expanded once. The edge count is an upper bound
-    # on the number of additional stack entries, including shared dependencies.
-    for _ in [None] * (edge_count + 1):
-        if not stack:
-            break
-        current = stack.pop()
-        identity = (_archive_key(current), current.data.file.path)
-        if identity in seen:
-            continue
-        seen[identity] = None
-        closure.append(current)
-        stack.extend(current.direct)
-
-    if stack:
-        fail("dependency cycle while collecting Go archives")
-    return closure
-
-def _archives_in_mode(go, archives):
-    """Recompiles archives and their dependency closures in go.mode when needed."""
-    cache = go._archive_recompile_cache
-    if cache == None:
-        return archives
-
-    roots = []
-    for archive in archives:
-        key = _archive_key(archive)
-        if key in cache:
-            continue
-        if archive.source.mode != go.mode:
-            roots.append(archive)
-            continue
-
-        # Reuse complete dependency branches that are already in the desired
-        # mode. If two such branches contain independently recompiled copies of
-        # the same package, keep the first branch canonical and rebuild the
-        # conflicting branch against it below.
-        closure = _archive_closure(archive)
-        conflict = False
-        for current in closure:
-            current_key = _archive_key(current)
-            if current_key in cache and cache[current_key].data.file != current.data.file:
-                conflict = True
-                break
-        if conflict:
-            roots.append(archive)
-        else:
-            for current in closure:
-                cache[_archive_key(current)] = current
-
-    if roots:
-        arc_data_list = depset(transitive = [archive.transitive for archive in roots]).to_list()
-        label_to_arc_data = {data.label: data for data in arc_data_list}
-
-        # Build a depth-first post-order list without recursion. Starlark has
-        # neither recursive calls nor while loops, so iterate over a list long
-        # enough for every archive to be pushed before and after its deps.
-        dep_list = []
-        stack = [archive.data.label for archive in roots]
-        DEPS_UNPROCESSED = -1
-        deps_pushed = {label: DEPS_UNPROCESSED for label in stack}
-        dependents = {label: [] for label in stack}
-
-        for _ in [None] * (2 * len(arc_data_list)):
-            if not stack:
-                break
-
-            label = stack.pop()
-            if deps_pushed[label] == 0:
-                dep_list.append(label)
-                for parent in dependents.get(label, []):
-                    deps_pushed[parent] -= 1
-                    if deps_pushed[parent] == 0:
-                        stack.append(parent)
-                continue
-
-            deps_pushed[label] = 0
-            for child in label_to_arc_data[label]._dep_labels:
-                child_key = (str(child), None)
-                if child_key in cache:
-                    continue
-                if child not in deps_pushed:
-                    stack.append(child)
-                    deps_pushed[child] = DEPS_UNPROCESSED
-                    deps_pushed[label] += 1
-                    dependents[child] = [label]
-                elif deps_pushed[child] != 0:
-                    deps_pushed[label] += 1
-                    dependents[child].append(label)
-            if deps_pushed[label] == 0:
-                stack.append(label)
-
-        if stack:
-            fail("dependency cycle while recompiling Go archives in the consuming mode")
-
-        for label in dep_list:
-            key = (str(label), None)
-            if key in cache:
-                continue
-            data = label_to_arc_data[label]
-            direct = [cache[(str(dep), None)] for dep in data._dep_labels]
-            package_metadata = getattr(data, "_package_metadata", None)
-            source = GoInfo(
-                name = data.name,
-                label = data.label,
-                importpath = data.importpath,
-                importmap = data.importmap,
-                importpath_aliases = data.importpath_aliases,
-                pathtype = data.pathtype,
-                testfilter = None,
-                is_main = False,
-                mode = go.mode,
-                srcs = list(data.srcs),
-                cover = data._cover,
-                embedsrcs = list(data._embedsrcs),
-                x_defs = dict(data._x_defs),
-                deps = direct,
-                gc_goopts = list(data._gc_goopts),
-                runfiles = data.runfiles,
-                cgo = data._cgo,
-                cdeps = list(data._cdeps),
-                cppopts = list(data._cppopts),
-                copts = list(data._copts),
-                cxxopts = list(data._cxxopts),
-                clinkopts = list(data._clinkopts),
-                pgoprofile = None,
-                _mode_info = None,
-                _package_metadata = package_metadata,
-            )
-            cache[key] = _emit_archive(
-                go,
-                source = source,
-                # Dependency archives are declared in the consumer's output
-                # package, so include the consumer name to avoid action
-                # conflicts between sibling consumers.
-                _recompile_suffix = ".mode_recompile_{}_{}".format(
-                    go.label.name.replace("/", "_"),
-                    len(cache),
-                ),
-            )
-
-    return [cache.get(_archive_key(archive), archive) for archive in archives]
-
 def emit_archive(go, source = None, _recompile_suffix = "", recompile_internal_deps = None, is_external_pkg = False):
     """See go/toolchains.rst#archive for full documentation."""
 
     if source == None:
         fail("source is a required parameter")
 
-    direct = _archives_in_mode(go, source.deps)
-    if direct != source.deps:
-        attrs = structs.to_dict(source)
-        attrs["deps"] = direct
-        source = GoInfo(**attrs)
-
-    archive = _emit_archive(
-        go,
-        source = source,
-        _recompile_suffix = _recompile_suffix,
-        recompile_internal_deps = recompile_internal_deps,
-        is_external_pkg = is_external_pkg,
-    )
-    if go._archive_recompile_cache != None and _recompile_suffix:
-        # go_test deliberately recompiles dependencies that transitively import
-        # its embedded library. Keep that replacement canonical for subsequent
-        # archives instead of restoring an older same-label dependency from the
-        # mode-normalization cache.
-        go._archive_recompile_cache[_archive_key(archive)] = archive
-    return archive
-
-def _emit_archive(go, source, _recompile_suffix = "", recompile_internal_deps = None, is_external_pkg = False):
     testfilter = getattr(source, "testfilter", None)
     pre_ext = ""
     if go.mode.linkmode == LINKMODE_C_ARCHIVE:

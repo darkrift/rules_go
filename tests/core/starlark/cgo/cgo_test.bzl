@@ -1,9 +1,29 @@
 load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library", "go_test")
+load("@io_bazel_rules_go//go/private:providers.bzl", "GoArchive", "GoInfo")
 load("@rules_cc//cc:cc_toolchain_config_lib.bzl", "feature", "tool_path")  # buildifier: disable=deprecated-function
 load("@rules_cc//cc:defs.bzl", "cc_toolchain")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/toolchains:cc_toolchain_config_info.bzl", "CcToolchainConfigInfo")
+load("@with_cfg.bzl", "with_cfg")
+
+pure_on_go_library, _pure_on_go_library_internal = (
+    with_cfg(
+        go_library,
+        extra_providers = [GoArchive, GoInfo],
+    )
+        .set(Label("@io_bazel_rules_go//go/config:pure"), "on")
+        .build()
+)
+
+pure_off_go_library, _pure_off_go_library_internal = (
+    with_cfg(
+        go_library,
+        extra_providers = [GoArchive, GoInfo],
+    )
+        .set(Label("@io_bazel_rules_go//go/config:pure"), "off")
+        .build()
+)
 
 def _test_cc_config_impl(ctx):
     tool_paths = [
@@ -58,16 +78,96 @@ missing_cc_toolchain_explicit_pure_off_test = analysistest.make(
     },
 )
 
-def _pure_on_with_cgo_dependency_test(ctx):
+def _pure_constraint_failure_test(ctx):
     env = analysistest.begin(ctx)
 
-    asserts.expect_failure(env, "has pure explicitly set to on, but a Go dependency requires cgo")
+    asserts.expect_failure(env, "The go_library pure attribute is a constraint")
 
     return analysistest.end(env)
 
-pure_on_with_cgo_dependency_test = analysistest.make(
-    _pure_on_with_cgo_dependency_test,
+pure_constraint_failure_test = analysistest.make(
+    _pure_constraint_failure_test,
     expect_failure = True,
+)
+
+pure_constraint_failure_in_auto_test = analysistest.make(
+    _pure_constraint_failure_test,
+    expect_failure = True,
+    config_settings = {
+        "//command_line_option:extra_toolchains": str(Label("//tests/core/starlark/cgo:runtime_libs_test_cc_toolchain")),
+        str(Label("@io_bazel_rules_go//go/config:pure")): "auto",
+    },
+)
+
+pure_constraint_failure_in_on_test = analysistest.make(
+    _pure_constraint_failure_test,
+    expect_failure = True,
+    config_settings = {
+        str(Label("@io_bazel_rules_go//go/config:pure")): "on",
+    },
+)
+
+def _inconsistent_pure_transition_test(ctx):
+    env = analysistest.begin(ctx)
+
+    asserts.expect_failure(env, "Archive mode does not match")
+
+    return analysistest.end(env)
+
+inconsistent_pure_transition_from_auto_test = analysistest.make(
+    _inconsistent_pure_transition_test,
+    expect_failure = True,
+    config_settings = {
+        "//command_line_option:extra_toolchains": str(Label("//tests/core/starlark/cgo:runtime_libs_test_cc_toolchain")),
+        str(Label("@io_bazel_rules_go//go/config:pure")): "auto",
+    },
+)
+
+inconsistent_pure_transition_from_on_test = analysistest.make(
+    _inconsistent_pure_transition_test,
+    expect_failure = True,
+    config_settings = {
+        str(Label("@io_bazel_rules_go//go/config:pure")): "on",
+    },
+)
+
+def _pure_mode_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target = analysistest.target_under_test(env)
+
+    asserts.equals(env, ctx.attr.expected_pure, target[GoInfo].mode.pure)
+
+    return analysistest.end(env)
+
+_pure_mode_test_attrs = {
+    "expected_pure": attr.bool(mandatory = True),
+}
+
+pure_auto_with_cc_mode_test = analysistest.make(
+    _pure_mode_test_impl,
+    attrs = _pure_mode_test_attrs,
+    config_settings = {
+        "//command_line_option:extra_toolchains": str(Label("//tests/core/starlark/cgo:runtime_libs_test_cc_toolchain")),
+        str(Label("@io_bazel_rules_go//go/config:pure")): "auto",
+    },
+)
+
+pure_auto_without_cc_mode_test = analysistest.make(
+    _pure_mode_test_impl,
+    attrs = _pure_mode_test_attrs,
+    config_settings = {
+        "//command_line_option:extra_toolchains": str(Label("//tests/core/starlark/cgo:fake_go_toolchain")),
+        "//command_line_option:platforms": str(Label("//tests/core/starlark/cgo:platform_has_no_cc_toolchain")),
+        str(Label("@io_bazel_rules_go//go/config:pure")): "auto",
+    },
+)
+
+pure_on_mode_test = analysistest.make(
+    _pure_mode_test_impl,
+    attrs = _pure_mode_test_attrs,
+    config_settings = {
+        str(Label("@io_bazel_rules_go//go/config:pure")): "on",
+    },
 )
 
 def _runtime_lib_inputs_test_impl(ctx):
@@ -225,6 +325,14 @@ def cgo_test_suite():
     )
 
     go_library(
+        name = "pure_on_library",
+        srcs = ["main.go"],
+        importpath = "example.com/pure_on_library",
+        pure = "on",
+        tags = ["manual"],
+    )
+
+    go_library(
         name = "pure_off_transitive_library",
         srcs = ["main.go"],
         deps = [":pure_off_library"],
@@ -245,14 +353,6 @@ def cgo_test_suite():
             pure = "on",
             tags = ["manual"],
         )
-        go_library(
-            name = "pure_on_library_" + shape,
-            srcs = ["main.go"],
-            deps = deps,
-            importpath = "example.com/pure_on_library_" + shape,
-            pure = "on",
-            tags = ["manual"],
-        )
         go_test(
             name = "pure_on_test_" + shape,
             srcs = ["main.go"],
@@ -267,12 +367,6 @@ def cgo_test_suite():
         pure = "on",
         tags = ["manual"],
     )
-    go_library(
-        name = "pure_on_library_embed",
-        embed = [":pure_off_library"],
-        pure = "on",
-        tags = ["manual"],
-    )
     go_test(
         name = "pure_on_test_embed",
         embed = [":pure_off_library"],
@@ -282,14 +376,126 @@ def cgo_test_suite():
 
     pure_on_failure_targets = [
         "pure_on_{}_{}".format(rule_kind, shape)
-        for rule_kind in ["binary", "library", "test"]
+        for rule_kind in ["binary", "test"]
         for shape in ["direct", "embed", "mixed", "transitive"]
     ]
     for target_name in pure_on_failure_targets:
-        pure_on_with_cgo_dependency_test(
+        pure_constraint_failure_test(
             name = target_name + "_test",
             target_under_test = ":" + target_name,
         )
+
+    # Explicit library modes are constraints on the graph-wide configuration,
+    # not transitions. Auto keeps the legacy behavior: impure when a C++
+    # toolchain is available, pure otherwise.
+    pure_constraint_failure_in_auto_test(
+        name = "pure_on_library_in_auto_mode_test",
+        target_under_test = ":pure_on_library",
+    )
+
+    pure_constraint_failure_in_on_test(
+        name = "pure_off_library_in_on_mode_test",
+        target_under_test = ":pure_off_library",
+    )
+
+    go_binary(
+        name = "incompatible_library_constraints",
+        srcs = ["main.go"],
+        deps = [
+            ":pure_off_library",
+            ":pure_on_library",
+        ],
+        tags = ["manual"],
+    )
+
+    pure_constraint_failure_in_auto_test(
+        name = "incompatible_library_constraints_in_auto_mode_test",
+        target_under_test = ":incompatible_library_constraints",
+    )
+
+    pure_constraint_failure_in_on_test(
+        name = "incompatible_library_constraints_in_on_mode_test",
+        target_under_test = ":incompatible_library_constraints",
+    )
+
+    pure_auto_with_cc_mode_test(
+        name = "auto_library_with_cc_is_impure_test",
+        expected_pure = False,
+        target_under_test = ":normal_library",
+    )
+
+    pure_auto_with_cc_mode_test(
+        name = "pure_off_library_matches_auto_impure_test",
+        expected_pure = False,
+        target_under_test = ":pure_off_library",
+    )
+
+    pure_auto_without_cc_mode_test(
+        name = "auto_library_without_cc_is_pure_test",
+        expected_pure = True,
+        target_under_test = ":normal_library",
+    )
+
+    pure_on_mode_test(
+        name = "auto_library_in_on_mode_is_pure_test",
+        expected_pure = True,
+        target_under_test = ":normal_library",
+    )
+
+    pure_on_mode_test(
+        name = "pure_on_library_matches_on_mode_test",
+        expected_pure = True,
+        target_under_test = ":pure_on_library",
+    )
+
+    # The cgo build constraint affects these sources even though the library
+    # does not set cgo = True and has no C dependencies.
+    go_library(
+        name = "pure_transition_leaf",
+        srcs = [
+            "pure_transition_leaf_cgo.go",
+            "pure_transition_leaf_pure.go",
+        ],
+        importpath = "example.com/pure_transition_leaf",
+        tags = ["manual"],
+    )
+
+    pure_on_go_library(
+        name = "pure_on_transitioned_intermediate",
+        srcs = ["pure_transition_intermediate.go"],
+        deps = [":pure_transition_leaf"],
+        importpath = "example.com/pure_on_transitioned_intermediate",
+        pure = "on",
+        tags = ["manual"],
+    )
+
+    pure_off_go_library(
+        name = "pure_off_transitioned_intermediate",
+        srcs = ["pure_transition_intermediate.go"],
+        deps = [":pure_transition_leaf"],
+        importpath = "example.com/pure_off_transitioned_intermediate",
+        pure = "off",
+        tags = ["manual"],
+    )
+
+    pure_transition_failure_tests = []
+    for rule_kind, rule in [("binary", go_binary), ("test", go_test)]:
+        for consumer_mode, dependency, analysis_test in [
+            ("auto", ":pure_on_transitioned_intermediate", inconsistent_pure_transition_from_auto_test),
+            ("on", ":pure_off_transitioned_intermediate", inconsistent_pure_transition_from_on_test),
+        ]:
+            target_name = "pure_{}_{}_with_transitioned_library".format(consumer_mode, rule_kind)
+            rule(
+                name = target_name,
+                srcs = ["main.go"],
+                deps = [dependency],
+                tags = ["manual"],
+            )
+            analysis_test(
+                name = target_name + "_test",
+                target_under_test = ":" + target_name,
+            )
+            pure_transition_failure_tests.append(target_name + "_test")
 
     go_binary(
         name = "runtime_libs_static_binary",
@@ -359,10 +565,22 @@ def cgo_test_suite():
     native.test_suite(
         name = "cgo_tests",
         tests = [
+            ":auto_library_in_on_mode_is_pure_test",
+            ":auto_library_with_cc_is_impure_test",
+            ":auto_library_without_cc_is_pure_test",
             ":dynamic_runtime_lib_inputs_test",
+            ":incompatible_library_constraints_in_auto_mode_test",
+            ":incompatible_library_constraints_in_on_mode_test",
             ":missing_cc_toolchain_explicit_pure_off_test",
             ":missing_cc_toolchain_transitive_pure_off_test",
+            ":pure_off_library_in_on_mode_test",
+            ":pure_off_library_matches_auto_impure_test",
+            ":pure_on_library_in_auto_mode_test",
+            ":pure_on_library_matches_on_mode_test",
             ":static_runtime_lib_inputs_test",
             ":stdlib_runtime_lib_inputs_test",
-        ] + [":" + target_name + "_test" for target_name in pure_on_failure_targets],
+        ] + [
+            ":" + test_name
+            for test_name in [target_name + "_test" for target_name in pure_on_failure_targets] + pure_transition_failure_tests
+        ],
     )
