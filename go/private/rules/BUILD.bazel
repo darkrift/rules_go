@@ -81,6 +81,7 @@ bzl_library(
         "//go/private:common",
         "//go/private:context",
         "//go/private:providers",
+        "//go/private/rules:transition",
     ],
 )
 

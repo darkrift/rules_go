@@ -90,8 +90,8 @@ go_sdk.nogo(nogo = "//:my_nogo")
 func TestCommandLineSettingsReachTools(t *testing.T) {
 	for _, setting := range []string{"static", "pure"} {
 		t.Run(setting, func(t *testing.T) {
-			got := nogoGoOptions(t, "//:plain", "--@io_bazel_rules_go//go/config:"+setting)
-			want := setting + "=true"
+			flag, want := settingFlagAndValue(setting)
+			got := nogoGoOptions(t, "//:plain", flag)
 			if !contains(got, want) {
 				t.Errorf("nogo is not built with %s: got %s", want, strings.Join(got, ", "))
 			}
@@ -115,14 +115,16 @@ func TestCommandLineSettingsReachToolsWithExcludedStarlarkFlags(t *testing.T) {
 
 	for _, setting := range []string{"static", "pure"} {
 		t.Run(setting, func(t *testing.T) {
-			got := nogoGoOptions(t, "//:plain", excludeFlag, "--@io_bazel_rules_go//go/config:"+setting)
-			if want := setting + "=true"; !contains(got, want) {
+			flag, want := settingFlagAndValue(setting)
+			got := nogoGoOptions(t, "//:plain", excludeFlag, flag)
+			if !contains(got, want) {
 				t.Errorf("nogo is not built with %s: got %s", want, strings.Join(got, ", "))
 			}
 		})
 		t.Run(setting+"_attr", func(t *testing.T) {
 			got := nogoGoOptions(t, "//:"+setting+"_attr", excludeFlag)
-			if contains(got, setting+"=true") {
+			_, settingValue := settingFlagAndValue(setting)
+			if contains(got, settingValue) {
 				t.Errorf("nogo inherited %s from the rule attribute: got %s", setting, strings.Join(got, ", "))
 			}
 		})
@@ -163,7 +165,8 @@ func TestRuleAttributesDoNotReachTools(t *testing.T) {
 	for _, setting := range []string{"static", "pure"} {
 		t.Run(setting, func(t *testing.T) {
 			got := nogoGoOptions(t, "//:"+setting+"_attr")
-			if contains(got, setting+"=true") {
+			_, settingValue := settingFlagAndValue(setting)
+			if contains(got, settingValue) {
 				t.Errorf("nogo inherited %s from the rule attribute: got %s", setting, strings.Join(got, ", "))
 			}
 		})
@@ -197,6 +200,14 @@ func TestToolsShareStdlib(t *testing.T) {
 	}
 	t.Errorf("the tools of //:tool_user are built against %d standard libraries in configurations differing in: %s",
 		len(hashes), strings.Join(diffs, "; "))
+}
+
+func settingFlagAndValue(setting string) (flag, value string) {
+	value = "true"
+	if setting == "pure" {
+		value = "on"
+	}
+	return "--@io_bazel_rules_go//go/config:" + setting + "=" + value, setting + "=" + value
 }
 
 // nogoGoOptions returns the rules_go settings that the nogo binary reachable

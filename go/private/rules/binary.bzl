@@ -394,13 +394,14 @@ def _go_binary_kwargs(go_cc_aspects = []):
             ),
             "pure": attr.string(
                 default = "auto",
+                values = ["auto", "on", "off"],
                 doc = """Controls whether cgo source code and dependencies are compiled and linked,
                 similar to setting `CGO_ENABLED`. May be one of `on`, `off`,
-                or `auto`. If `auto`, pure mode is enabled when no C/C++
-                toolchain is configured or when cross-compiling. It's usually better to
-                control this on the command line with
-                `--@io_bazel_rules_go//go/config:pure`. See [mode attributes], specifically
-                [pure].
+                or `auto`. If `auto`, this defers to `//go/config:pure`, which
+                defaults to `off`. Setting the build setting to `auto` starts in
+                pure mode and switches to `off` when a Go dependency requires
+                cgo. Pure mode is also used when no C/C++ toolchain is configured
+                or when cross-compiling. See [mode attributes], specifically [pure].
                 """,
             ),
             "static": attr.string(

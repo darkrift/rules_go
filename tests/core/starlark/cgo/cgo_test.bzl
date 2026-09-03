@@ -1,9 +1,9 @@
 load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library", "go_test")
 load("@rules_cc//cc:cc_toolchain_config_lib.bzl", "feature", "tool_path")  # buildifier: disable=deprecated-function
 load("@rules_cc//cc:defs.bzl", "cc_toolchain")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/toolchains:cc_toolchain_config_info.bzl", "CcToolchainConfigInfo")
-load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_cross_binary")
 
 def _test_cc_config_impl(ctx):
     tool_paths = [
@@ -56,6 +56,18 @@ missing_cc_toolchain_explicit_pure_off_test = analysistest.make(
     config_settings = {
         "//command_line_option:extra_toolchains": str(Label("//tests/core/starlark/cgo:fake_go_toolchain")),
     },
+)
+
+def _pure_on_with_cgo_dependency_test(ctx):
+    env = analysistest.begin(ctx)
+
+    asserts.expect_failure(env, "has pure explicitly set to on, but a Go dependency requires cgo")
+
+    return analysistest.end(env)
+
+pure_on_with_cgo_dependency_test = analysistest.make(
+    _pure_on_with_cgo_dependency_test,
+    expect_failure = True,
 )
 
 def _runtime_lib_inputs_test_impl(ctx):
@@ -170,6 +182,115 @@ def cgo_test_suite():
         target_under_test = ":go_cross_impure_cgo",
     )
 
+    go_library(
+        name = "cross_impure_library",
+        srcs = ["main.go"],
+        importpath = "example.com/cross_impure_library",
+        pure = "off",
+        tags = ["manual"],
+    )
+
+    go_binary(
+        name = "cross_auto_impure_consumer",
+        srcs = ["main.go"],
+        deps = [":cross_impure_library"],
+        tags = ["manual"],
+    )
+
+    go_cross_binary(
+        name = "go_cross_transitive_impure_cgo",
+        platform = ":platform_has_no_cc_toolchain",
+        target = ":cross_auto_impure_consumer",
+        tags = ["manual"],
+    )
+
+    missing_cc_toolchain_explicit_pure_off_test(
+        name = "missing_cc_toolchain_transitive_pure_off_test",
+        target_under_test = ":go_cross_transitive_impure_cgo",
+    )
+
+    go_library(
+        name = "pure_off_library",
+        srcs = ["main.go"],
+        importpath = "example.com/pure_off_library",
+        pure = "off",
+        tags = ["manual"],
+    )
+
+    go_library(
+        name = "normal_library",
+        srcs = ["main.go"],
+        importpath = "example.com/normal_library",
+        tags = ["manual"],
+    )
+
+    go_library(
+        name = "pure_off_transitive_library",
+        srcs = ["main.go"],
+        deps = [":pure_off_library"],
+        importpath = "example.com/pure_off_transitive_library",
+        tags = ["manual"],
+    )
+
+    dependency_shapes = [
+        ("direct", [":pure_off_library"]),
+        ("mixed", [":normal_library", ":pure_off_transitive_library"]),
+        ("transitive", [":pure_off_transitive_library"]),
+    ]
+    for shape, deps in dependency_shapes:
+        go_binary(
+            name = "pure_on_binary_" + shape,
+            srcs = ["main.go"],
+            deps = deps,
+            pure = "on",
+            tags = ["manual"],
+        )
+        go_library(
+            name = "pure_on_library_" + shape,
+            srcs = ["main.go"],
+            deps = deps,
+            importpath = "example.com/pure_on_library_" + shape,
+            pure = "on",
+            tags = ["manual"],
+        )
+        go_test(
+            name = "pure_on_test_" + shape,
+            srcs = ["main.go"],
+            deps = deps,
+            pure = "on",
+            tags = ["manual"],
+        )
+
+    go_binary(
+        name = "pure_on_binary_embed",
+        embed = [":pure_off_library"],
+        pure = "on",
+        tags = ["manual"],
+    )
+    go_library(
+        name = "pure_on_library_embed",
+        embed = [":pure_off_library"],
+        pure = "on",
+        tags = ["manual"],
+    )
+    go_test(
+        name = "pure_on_test_embed",
+        embed = [":pure_off_library"],
+        pure = "on",
+        tags = ["manual"],
+    )
+
+    pure_on_failure_targets = [
+        "pure_on_{}_{}".format(rule_kind, shape)
+        for rule_kind in ["binary", "library", "test"]
+        for shape in ["direct", "embed", "mixed", "transitive"]
+    ]
+    for target_name in pure_on_failure_targets:
+        pure_on_with_cgo_dependency_test(
+            name = target_name + "_test",
+            target_under_test = ":" + target_name,
+        )
+
     go_binary(
         name = "runtime_libs_static_binary",
         srcs = [
@@ -241,7 +362,8 @@ def cgo_test_suite():
         tests = [
             ":dynamic_runtime_lib_inputs_test",
             ":missing_cc_toolchain_explicit_pure_off_test",
+            ":missing_cc_toolchain_transitive_pure_off_test",
             ":static_runtime_lib_inputs_test",
             ":stdlib_runtime_lib_inputs_test",
-        ],
+        ] + [":" + target_name + "_test" for target_name in pure_on_failure_targets],
     )

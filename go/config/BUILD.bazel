@@ -27,10 +27,15 @@ bool_flag(
 )
 
 # Universally scoped for the same reason as :static.
-bool_flag(
+string_flag(
     name = "pure",
-    build_setting_default = False,
+    build_setting_default = "off",
     scope = "universal",
+    values = [
+        "auto",
+        "off",
+        "on",
+    ],
     visibility = ["//visibility:public"],
 )
 

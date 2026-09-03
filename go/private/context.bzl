@@ -78,6 +78,7 @@ load(
     "GoConfigInfo",
     "GoContextInfo",
     "GoInfo",
+    "GoModeInfo",
     "GoStdLib",
     "INFERRED_PATH",
     "get_archive",
@@ -432,6 +433,7 @@ def new_go_info(
         "cxxopts": _expand_opts(go, "cxxopts", getattr(attr, "cxxopts", [])),
         "clinkopts": _expand_opts(go, "clinkopts", getattr(attr, "clinkopts", [])),
         "pgoprofile": getattr(attr, "pgoprofile", None),
+        "_mode_info": getattr(go, "mode_info", None),
         "_package_metadata": package_metadata,
     }
 
@@ -576,6 +578,21 @@ default_go_config_info = GoConfigInfo(
     export_stdlib = False,
 )
 
+def _inherited_mode_info(attr):
+    """Returns the cgo-required mode propagated by Go dependencies, if any."""
+    inherited = None
+    for attr_name in ("deps", "embed"):
+        for dep in getattr(attr, attr_name, []):
+            if GoInfo not in dep:
+                continue
+            mode_info = getattr(dep[GoInfo], "_mode_info", None)
+            if not mode_info:
+                continue
+            if inherited and inherited.mode != mode_info.mode:
+                fail("Go dependencies require incompatible build modes")
+            inherited = mode_info
+    return inherited
+
 def _cc_runtime_libs_for_mode(mode, cgo_tools):
     if mode.linkmode in (LINKMODE_SHARED, LINKMODE_PLUGIN, LINKMODE_C_SHARED):
         return cgo_tools.cc_toolchain.dynamic_runtime_lib(feature_configuration = cgo_tools.feature_configuration)
@@ -609,12 +626,19 @@ def go_context(
     if not attr:
         attr = ctx.attr
     toolchain = ctx.toolchains[GO_TOOLCHAIN]
-    cgo_context_info = None
+    inherited_mode_info = _inherited_mode_info(attr)
+    if inherited_mode_info and getattr(attr, "pure", None) == "on":
+        fail("{} has pure explicitly set to on, but a Go dependency requires cgo".format(ctx.label))
+    cgo_context_info = inherited_mode_info.cgo_context_info if inherited_mode_info else None
     go_context_info = None
     go_config_info = None
     stdlib = None
 
-    if go_context_data == None:
+    if inherited_mode_info:
+        go_config_info = inherited_mode_info.mode
+        stdlib = inherited_mode_info.stdlib
+        go_context_info = inherited_mode_info.go_context_info
+    elif go_context_data == None:
         if hasattr(attr, "_go_context_data"):
             go_context_data = attr._go_context_data
             go_config_info = go_context_data[GoConfigInfo]
@@ -630,14 +654,15 @@ def go_context(
         go_context_info = go_context_data[GoContextInfo]
 
     cgo_disabled = (go_config_info and go_config_info.pure) or (
+        not inherited_mode_info and
         getattr(attr, "_pure_constraint", None) and
         ctx.target_platform_has_constraint(attr._pure_constraint[platform_common.ConstraintValueInfo])
     )
 
     needs_cgo_context = maybe_needs_cc_toolchain or go_config_info != None
-    if not cgo_disabled and needs_cgo_context and CPP_TOOLCHAIN_TYPE in ctx.toolchains:
+    if not cgo_context_info and not cgo_disabled and needs_cgo_context and CPP_TOOLCHAIN_TYPE in ctx.toolchains:
         cgo_context_info = cgo_context_data_impl(ctx)
-    elif not cgo_disabled and maybe_needs_cc_toolchain and _sources_use_cgo(attr, []):
+    elif not cgo_context_info and not cgo_disabled and maybe_needs_cc_toolchain and _sources_use_cgo(attr, []):
         fail((
             "{} calls go_context() without declaring the C++ toolchain, " +
             "configuration fragments, and attributes required by rules_go. " +
@@ -766,6 +791,16 @@ def go_context(
     else:
         deprecated_properties = {}
 
+    requires_cgo = inherited_mode_info != None or getattr(attr, "pure", None) == "off"
+    mode_info = None
+    if requires_cgo:
+        mode_info = GoModeInfo(
+            cgo_context_info = cgo_context_info,
+            go_context_info = go_context_info,
+            mode = mode,
+            stdlib = stdlib,
+        )
+
     return struct(
         # Fields
         toolchain = toolchain,
@@ -780,6 +815,7 @@ def go_context(
         importpath_aliases = importpath_aliases,
         pathtype = pathtype,
         cgo_tools = cgo_tools,
+        mode_info = mode_info,
         nogo = ctx.attr._nogo[DefaultInfo].files_to_run if hasattr(ctx.attr, "_nogo") else None,
         coverdata = go_context_info.coverdata if go_context_info else None,
         coverage_enabled = ctx.configuration.coverage_enabled,
@@ -809,6 +845,7 @@ def go_context(
         # Private
         # TODO: All uses of this should be removed
         _ctx = ctx,
+        _archive_recompile_cache = {} if mode_info else None,
 
         # Deprecated
         **deprecated_properties
@@ -856,7 +893,7 @@ go_context_data = rule(
 def cgo_context_data_impl(ctx):
     pure_constraint = ctx.attr._pure_constraint[platform_common.ConstraintValueInfo]
     if (ctx.target_platform_has_constraint(pure_constraint) or
-        ctx.attr._pure_flag[BuildSettingInfo].value):
+        ctx.attr._pure_flag[BuildSettingInfo].value != "off"):
         return None
 
     # TODO(jayconrod): find a way to get a list of files that comprise the
@@ -1102,13 +1139,15 @@ def _go_config_impl(ctx):
         else:
             linkmode = LINKMODE_NORMAL
 
+    pure = ctx.attr.pure[BuildSettingInfo].value != "off"
+
     go_config_info = GoConfigInfo(
         goos = toolchain.default_goos,
         goarch = toolchain.default_goarch,
         static = ctx.attr.static[BuildSettingInfo].value,
         race = race,
         msan = msan,
-        pure = ctx.attr.pure[BuildSettingInfo].value,
+        pure = pure,
         strip = ctx.attr.strip,
         debug = ctx.attr.debug[BuildSettingInfo].value,
         linkmode = linkmode,

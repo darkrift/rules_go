@@ -97,12 +97,12 @@ def _go_transition_impl(settings, attr):
         if pure == "on":
             fail('race = "on" cannot be set when pure = "on" is set. race requires cgo.')
         pure = "off"
-        settings["//go/config:pure"] = False
+        settings["//go/config:pure"] = "off"
     if msan == "on":
         if pure == "on":
             fail('msan = "on" cannot be set when msan = "on" is set. msan requires cgo.')
         pure = "off"
-        settings["//go/config:pure"] = False
+        settings["//go/config:pure"] = "off"
     if pure == "on":
         settings["//go/config:race"] = False
         settings["//go/config:msan"] = False
@@ -146,8 +146,17 @@ def _go_transition_impl(settings, attr):
         # real setting can be reset to this value before the new configuration
         # would cross a non-deps dependency edge.
         if value != old_value:
-            if original_settings.get(original_key):
-                fail("go_transition can't be nested")
+            previous_original = original_settings.get(original_key)
+            if previous_original:
+                # go_library may override pure in either direction. If this
+                # transition restores the value from before the outermost Go
+                # transition, the original value no longer needs to be saved.
+                # Otherwise, keep it so non-Go dependencies can restore it.
+                # Other nested mode changes remain unsupported.
+                if key != "//go/config:pure":
+                    fail("go_transition can't be nested")
+                settings[original_key] = "" if value == json.decode(previous_original) else previous_original
+                continue
 
             # Encoding as JSON makes it possible to embed settings of arbitrary
             # types (currently bool, string and string_list) into a single type
@@ -198,7 +207,7 @@ _common_reset_transition_dict = dict({
     "//go/config:static": False,
     "//go/config:msan": False,
     "//go/config:race": False,
-    "//go/config:pure": False,
+    "//go/config:pure": "off",
     "//go/config:debug": False,
     "//go/config:linkmode": "auto",
     "//go/config:tags": [],
@@ -431,7 +440,7 @@ def _set_ternary(settings, attr, name):
     _check_ternary(name, value)
     if value != "auto":
         label = "//go/config:{}".format(name)
-        settings[label] = value == "on"
+        settings[label] = value if name == "pure" else value == "on"
     return value
 
 _SDK_VERSION_BUILD_SETTING = "//go/toolchain:sdk_version"

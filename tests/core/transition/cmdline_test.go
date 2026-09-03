@@ -73,9 +73,18 @@ func TestPure(t *testing.T) {
 		t.Fatalf("got %q; want %q", got, want)
 	}
 
-	out, err = bazel_testing.BazelOutput("run", "--@io_bazel_rules_go//go/config:pure", "//:maybe_pure")
+	out, err = bazel_testing.BazelOutput("run", "--@io_bazel_rules_go//go/config:pure=on", "//:maybe_pure")
 	if err != nil {
 		t.Fatalf("running //:maybe_pure with flag: %v", err)
+	}
+	got = string(bytes.TrimSpace(out))
+	if want := "pure"; got != want {
+		t.Fatalf("got %q; want %q", got, want)
+	}
+
+	out, err = bazel_testing.BazelOutput("run", "--@io_bazel_rules_go//go/config:pure=auto", "//:maybe_pure")
+	if err != nil {
+		t.Fatalf("running //:maybe_pure with pure=auto: %v", err)
 	}
 	got = string(bytes.TrimSpace(out))
 	if want := "pure"; got != want {

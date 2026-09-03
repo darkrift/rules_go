@@ -173,7 +173,7 @@ func TestGoProtoLibraryToolAttrsAreReset(t *testing.T) {
 		"//:foo_go_proto",
 		"@com_google_protobuf//:protoc",
 		true,
-		"--@io_bazel_rules_go//go/config:pure",
+		"--@io_bazel_rules_go//go/config:pure=on",
 	)
 }
 

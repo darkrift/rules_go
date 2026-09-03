@@ -63,11 +63,11 @@ or using `Bazel configuration transitions`_.
 | Instruments the binary for memory sanitization. Requires cgo. Mutually       |
 | exclusive with ``race``.                                                     |
 +------------------------+---------------------+-------------------------------+
-| :param:`pure`          | :type:`bool`        | :value:`false`                |
+| :param:`pure`          | :type:`string`      | :value:`"off"`                |
 +------------------------+---------------------+-------------------------------+
-| Disables cgo, even when a C/C++ toolchain is configured (similar to setting  |
-| ``CGO_ENABLED=0``). Packages that contain cgo code may still be built, but   |
-| the cgo code will be filtered out, and the ``cgo`` build tag will be false.  |
+| Controls cgo mode. Must be ``"on"``, ``"off"``, or ``"auto"``. ``"off"``     |
+| enables cgo and is the default. ``"on"`` disables cgo. ``"auto"`` starts in  |
+| pure mode and switches to cgo when a Go dependency requires it.              |
 +------------------------+---------------------+-------------------------------+
 | :param:`debug`         | :type:`bool`        | :value:`false`                |
 +------------------------+---------------------+-------------------------------+
@@ -128,7 +128,7 @@ Building pure go binaries
 You can switch the default binaries to non cgo using
 
 .. code:: bash
-    bazel build --@io_bazel_rules_go//go/config:pure //:my_binary
+    bazel build --@io_bazel_rules_go//go/config:pure=on //:my_binary
 You can build pure go binaries by setting those attributes on a binary.
 
 .. code:: bzl

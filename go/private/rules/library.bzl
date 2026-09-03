@@ -33,6 +33,7 @@ load(
 )
 load(
     "//go/private/rules:transition.bzl",
+    "go_transition",
     "non_go_transition",
 )
 
@@ -75,6 +76,7 @@ def _go_library_impl(ctx):
 
 go_library = go_rule(
     _go_library_impl,
+    cfg = go_transition,
     attrs = {
         "data": attr.label_list(
             allow_files = True,
@@ -187,6 +189,19 @@ go_library = go_rule(
             doc = """
             List of flags to add to the C link command.
             Subject to ["Make variable"] substitution and [Bourne shell tokenization]. Only valid if `cgo = True`.
+            """,
+        ),
+        "pure": attr.string(
+            default = "auto",
+            values = ["auto", "on", "off"],
+            doc = """Controls whether cgo source code and dependencies are compiled,
+            similar to setting `CGO_ENABLED`. May be one of `on`, `off`,
+            or `auto`. If `auto`, this defers to `//go/config:pure`, which
+            defaults to `off`. Setting this to `off` makes binaries, tests, and
+            libraries that consume this library use cgo even when
+            `--@io_bazel_rules_go//go/config:pure=on`. A consumer that explicitly
+            sets this to `on` is incompatible with a dependency that requires
+            cgo. See [mode attributes], specifically [pure].
             """,
         ),
         "_go_context_data": attr.label(default = "//:go_context_data"),

@@ -61,6 +61,11 @@ GoContextInfo = provider()
 
 CgoContextInfo = provider()
 
+# Carries the configuration inputs needed to compile and link consumers of a
+# go_library that explicitly requires cgo. This is private: consumers should
+# discover it through GoInfo rather than depending on it directly.
+GoModeInfo = provider()
+
 EXPLICIT_PATH = "explicit"
 
 INFERRED_PATH = "inferred"
